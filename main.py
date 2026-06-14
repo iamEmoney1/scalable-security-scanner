@@ -181,9 +181,7 @@ async def serve_dashboard():
                         <tr>
                             <td><strong>${item.target}</strong></td>
                             <td>${item.timestamp}</td>
-                            <td><code>${item.server}</code></td>
-                            <td><span class="grade-badge grade-${item.grade}">${item.grade}</span></td>
-                            <td style="color: ${item.grade === 'A' ? '#10b981' : '#f43f5e'}; font-size: 14px;">${item.findings}</td>
+                  <td style="color: ${item.grade === 'A' ? '#10b981' : '#f43f5e'}; font-size: 14px;">${item.findings}</td>
                         </tr>
                     `;
                 });
@@ -196,7 +194,9 @@ async def serve_dashboard():
                 alert('Vulnerability scanner pipeline initialized successfully.');
                 setTimeout(loadHistory, 1500);
             }
-
+                            <td><code>${item.server}</code></td>
+                            <td><span class="grade-badge grade-${item.grade}">${item.grade}</span></td>
+          
             loadHistory();
             setInterval(loadHistory, 8000);
         </script>
