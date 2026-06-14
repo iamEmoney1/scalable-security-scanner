@@ -9,24 +9,23 @@ import asyncio
 app = FastAPI()
 
 # ==========================================
-# STEP 3: AUTOMATED TIMER CONFIGURATION
+# CRON AUTOMATED INTERVAL SCANNER
 # ==========================================
 scheduler = BackgroundScheduler()
 
 def auto_cron_job():
     print("\n[CRON TIMERS] Executing recurring safety check...")
     try:
-        # This tells the background thread to run our scanning logic automatically
         asyncio.run(run_security_scan("google.com"))
     except Exception as e:
         print(f"[CRON ERROR] Auto scan skipped: {str(e)}")
 
-# This sets the background timer to scan google.com every 60 seconds
-scheduler.add_job(auto_cron_job, 'interval', seconds=60)
+scheduler.add_job(auto_cron_job, 'interval', minutes=5) # Sweeps every 5 mins now to prevent spam
 scheduler.start()
-# ==========================================
 
-# DATABASE INITIALIZATION
+# ==========================================
+# ADVANCED DATABASE SCHEMA
+# ==========================================
 def init_db():
     conn = sqlite3.connect("scans.db")
     cursor = conn.cursor()
@@ -37,6 +36,7 @@ def init_db():
             timestamp TEXT,
             ssl_active INTEGER,
             server TEXT,
+            grade TEXT,
             vulnerabilities TEXT
         )
     """)
@@ -45,33 +45,59 @@ def init_db():
 
 init_db()
 
+# ==========================================
+# DEEP SECURITY SCANNING ENGINE
+# ==========================================
 async def run_security_scan(target_url: str):
     try:
         async with httpx.AsyncClient() as client:
-            url = target_url if target_url.startswith(("http://", "https://")) else f"https://{target_url}"
-            response = await client.get(url, timeout=5.0)
+            # Clean URL format
+            clean_url = target_url.strip().replace("http://", "").replace("https://", "")
+            base_url = f"https://{clean_url}"
+            
+            # Start gathering security data
+            response = await client.get(base_url, timeout=5.0, follow_redirects=True)
             headers = response.headers
             
             has_ssl = 1 if response.url.scheme == "https" else 0
-            server_name = headers.get('Server', 'Hidden/Unknown')
+            server_name = headers.get('Server', 'Hidden / Protected')
             
+            # Audit missing protective headers
             missing_headers = []
-            if "X-Frame-Options" not in headers: missing_headers.append("Missing X-Frame-Options (Clickjacking Risk)")
-            if "Content-Security-Policy" not in headers: missing_headers.append("Missing CSP (XSS Risk)")
+            score = 100 # Perfect initial score
             
-            vulns_string = ", ".join(missing_headers) if missing_headers else "None Detected"
+            if "X-Frame-Options" not in headers: 
+                missing_headers.append("Missing X-Frame-Options (Clickjacking Risk)")
+                score -= 25
+            if "Content-Security-Policy" not in headers: 
+                missing_headers.append("Missing CSP (Cross-Site Scripting Risk)")
+                score -= 30
+            if "Strict-Transport-Security" not in headers:
+                missing_headers.append("Missing HSTS (Man-in-the-Middle Risk)")
+                score -= 15
+            if not has_ssl:
+                score -= 30
 
+            # Calculate Security Letter Grade
+            if score >= 90: grade = "A"
+            elif score >= 75: grade = "B"
+            elif score >= 50: grade = "C"
+            else: grade = "F"
+            
+            vulns_string = " | ".join(missing_headers) if missing_headers else "None Detected (Excellent Position)"
+
+            # Save full security parameters to relational storage
             conn = sqlite3.connect("scans.db")
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO scan_results (target, timestamp, ssl_active, server, vulnerabilities)
-                VALUES (?, ?, ?, ?, ?)
-            """, (target_url, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), has_ssl, server_name, vulns_string))
+                INSERT INTO scan_results (target, timestamp, ssl_active, server, grade, vulnerabilities)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (clean_url, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), has_ssl, server_name, grade, vulns_string))
             conn.commit()
             conn.close()
-            print(f"[DATABASE] Saved automatic check for {target_url}")
+            print(f"[DATABASE] Saved audit report for {clean_url} (Grade: {grade})")
     except Exception as e:
-        print(f"Scan failed: {str(e)}")
+        print(f"[SCAN FAILURE] Couldn't audit {target_url}: {str(e)}")
 
 @app.get("/scan")
 async def trigger_scan(target: str, background_tasks: BackgroundTasks):
@@ -82,50 +108,62 @@ async def trigger_scan(target: str, background_tasks: BackgroundTasks):
 async def get_scan_history():
     conn = sqlite3.connect("scans.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT id, target, timestamp, ssl_active, server, vulnerabilities FROM scan_results ORDER BY id DESC")
+    cursor.execute("SELECT id, target, timestamp, ssl_active, server, grade, vulnerabilities FROM scan_results ORDER BY id DESC")
     rows = cursor.fetchall()
     conn.close()
-    return [{"id": r[0], "target": r[1], "timestamp": r[2], "ssl_enabled": bool(r[3]), "server": r[4], "findings": r[5]} for r in rows]
+    return [{"id": r[0], "target": r[1], "timestamp": r[2], "ssl_enabled": bool(r[3]), "server": r[4], "grade": r[5], "findings": r[6]} for r in rows]
 
-# FRONTEND DASHBOARD HTML
+# ==========================================
+# RESPONSIVE FRONTEND SYSTEM
+# ==========================================
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
     return """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>Scalable Security Engine</title>
+        <title>SaaS Threat Scanner Control Panel</title>
         <style>
-            body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #f8fafc; padding: 40px; }
-            .container { max-width: 900px; margin: 0 auto; }
-            h1 { color: #38bdf8; }
-            .card { background: #1e293b; padding: 25px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); margin-bottom: 30px; }
-            input { width: 70%; padding: 12px; border: none; border-radius: 6px; background: #334155; color: white; font-size: 16px; }
-            button { padding: 12px 24px; border: none; border-radius: 6px; background: #0ea5e9; color: white; cursor: pointer; font-size: 16px; font-weight: bold; }
-            button:hover { background: #0284c7; }
-            table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            th, td { padding: 12px; text-align: left; border-bottom: 1px solid #334155; }
-            th { background: #334155; color: #38bdf8; }
-            .badge { padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
-            .badge-success { background: #22c55e; color: white; }
-            .badge-danger { background: #ef4444; color: white; }
+            body { font-family: 'Inter', system-ui, sans-serif; background: #0b0f19; color: #f1f5f9; padding: 40px; margin: 0; }
+            .container { max-width: 1000px; margin: 0 auto; }
+            header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; border-bottom: 1px solid #1e293b; padding-bottom: 20px; }
+            h1 { color: #38bdf8; margin: 0; font-size: 28px; }
+            .card { background: #111827; padding: 25px; border-radius: 12px; border: 1px solid #1e293b; margin-bottom: 30px; }
+            .flex-input { display: flex; gap: 15px; }
+            input { flex: 1; padding: 14px; border: 1px solid #334155; border-radius: 8px; background: #1f2937; color: white; font-size: 16px; }
+            button { padding: 14px 28px; border: none; border-radius: 8px; background: #0284c7; color: white; cursor: pointer; font-size: 16px; font-weight: 600; transition: 0.2s; }
+            button:hover { background: #0369a1; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { padding: 16px; text-align: left; border-bottom: 1px solid #1e293b; }
+            th { background: #1f2937; color: #38bdf8; font-weight: 600; }
+            .grade-badge { display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; border-radius: 50%; font-weight: bold; font-size: 16px; }
+            .grade-A { background: #10b981; color: white; }
+            .grade-B { background: #10b981; color: white; opacity: 0.8; }
+            .grade-C { background: #f59e0b; color: #0b0f19; }
+            .grade-F { background: #ef4444; color: white; }
         </style>
     </head>
     <body>
         <div class="container">
-            <h1>🛡️ Scalable Security Scanner</h1>
-            <p>Enter any domain asset to launch a background security analysis.</p>
+            <header>
+                <div>
+                    <h1>🛡️ Enterprise Vulnerability Guard</h1>
+                    <p style="color: #94a3b8; margin: 5px 0 0 0;">Asynchronous Infrastructure Intelligence Platform</p>
+                </div>
+            </header>
             
             <div class="card">
-                <input type="text" id="targetInput" placeholder="e.g. targetwebsite.com">
-                <button onclick="startScan()">Launch Scan</button>
+                <div class="flex-input">
+                    <input type="text" id="targetInput" placeholder="Enter network asset domain (e.g. secure-bank.com)">
+                    <button onclick="startScan()">Analyze Risk Posture</button>
+                </div>
             </div>
 
-            <h2>Scan Log History</h2>
-            <div class="card">
+            <h2>Discovered Threat Records</h2>
+            <div class="card" style="padding: 0; overflow: hidden;">
                 <table>
                     <thead>
-                        <tr><th>Target</th><th>Timestamp</th><th>SSL</th><th>Server</th><th>Vulnerabilities</th></tr>
+                        <tr><th>Target Host</th><th>Timestamp</th><th>Server Blueprint</th><th>Defense Grade</th><th>Identified Vulnerabilities</th></tr>
                     </thead>
                     <tbody id="historyTable"></tbody>
                 </table>
@@ -143,9 +181,9 @@ async def serve_dashboard():
                         <tr>
                             <td><strong>${item.target}</strong></td>
                             <td>${item.timestamp}</td>
-                            <td><span class="badge ${item.ssl_enabled ? 'badge-success' : 'badge-danger'}">${item.ssl_enabled ? 'SECURE' : 'NO SSL'}</span></td>
-                            <td>${item.server}</td>
-                            <td style="color: ${item.findings === 'None Detected' ? '#22c55e' : '#f43f5e'}">${item.findings}</td>
+                            <td><code>${item.server}</code></td>
+                            <td><span class="grade-badge grade-${item.grade}">${item.grade}</span></td>
+                            <td style="color: ${item.grade === 'A' ? '#10b981' : '#f43f5e'}; font-size: 14px;">${item.findings}</td>
                         </tr>
                     `;
                 });
@@ -153,14 +191,14 @@ async def serve_dashboard():
 
             async function startScan() {
                 const target = document.getElementById('targetInput').value;
-                if(!target) return alert('Type a domain first!');
+                if(!target) return alert('Target host configuration domain missing!');
                 await fetch(`/scan?target=${target}`);
-                alert('Scan successfully queued in background!');
+                alert('Vulnerability scanner pipeline initialized successfully.');
                 setTimeout(loadHistory, 1500);
             }
 
             loadHistory();
-            setInterval(loadHistory, 10000); // Refresh the UI screen automatically every 10 seconds
+            setInterval(loadHistory, 8000);
         </script>
     </body>
     </html>
