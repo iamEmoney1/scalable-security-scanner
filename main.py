@@ -114,56 +114,65 @@ async def get_scan_history():
     return [{"id": r[0], "target": r[1], "timestamp": r[2], "ssl_enabled": bool(r[3]), "server": r[4], "grade": r[5], "findings": r[6]} for r in rows]
 
 # ==========================================
-# RESPONSIVE FRONTEND SYSTEM
+# THE AUTH-BACKED FRONTEND UI GATEWAY
 # ==========================================
 @app.get("/", response_class=HTMLResponse)
-async def serve_dashboard():
+async def serve_portal():
     return """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>SaaS Threat Scanner Control Panel</title>
+        <title>Threat Scanner Gateway</title>
         <style>
-            body { font-family: 'Inter', system-ui, sans-serif; background: #0b0f19; color: #f1f5f9; padding: 40px; margin: 0; }
-            .container { max-width: 1000px; margin: 0 auto; }
-            header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 40px; border-bottom: 1px solid #1e293b; padding-bottom: 20px; }
-            h1 { color: #38bdf8; margin: 0; font-size: 28px; }
-            .card { background: #111827; padding: 25px; border-radius: 12px; border: 1px solid #1e293b; margin-bottom: 30px; }
-            .flex-input { display: flex; gap: 15px; }
-            input { flex: 1; padding: 14px; border: 1px solid #334155; border-radius: 8px; background: #1f2937; color: white; font-size: 16px; }
-            button { padding: 14px 28px; border: none; border-radius: 8px; background: #0284c7; color: white; cursor: pointer; font-size: 16px; font-weight: 600; transition: 0.2s; }
+            body { font-family: 'Inter', sans-serif; background: #0b0f19; color: #f1f5f9; padding: 40px; display: flex; justify-content: center; align-items: center; height: 80vh; }
+            .auth-card { background: #111827; padding: 35px; border-radius: 12px; border: 1px solid #1e293b; width: 350px; text-align: center; }
+            h2 { color: #38bdf8; margin-top: 0; }
+            input { width: 90%; padding: 12px; margin: 10px 0; border: 1px solid #334155; border-radius: 6px; background: #1f2937; color: white; }
+            button { width: 98%; padding: 12px; border: none; border-radius: 6px; background: #0284c7; color: white; font-weight: bold; cursor: pointer; margin-top: 10px; }
             button:hover { background: #0369a1; }
-            table { width: 100%; border-collapse: collapse; }
-            th, td { padding: 16px; text-align: left; border-bottom: 1px solid #1e293b; }
-            th { background: #1f2937; color: #38bdf8; font-weight: 600; }
-            .grade-badge { display: inline-block; width: 35px; height: 35px; line-height: 35px; text-align: center; border-radius: 50%; font-weight: bold; font-size: 16px; }
-            .grade-A { background: #10b981; color: white; }
-            .grade-B { background: #10b981; color: white; opacity: 0.8; }
-            .grade-C { background: #f59e0b; color: #0b0f19; }
-            .grade-F { background: #ef4444; color: white; }
+            .toggle-link { color: #94a3b8; font-size: 14px; margin-top: 15px; cursor: pointer; display: inline-block; }
+            table { width: 100%; border-collapse: collapse; text-align: left; }
+            th, td { padding: 16px; border-bottom: 1px solid #1e293b; }
         </style>
     </head>
     <body>
-        <div class="container">
-            <header>
+        <div class="auth-card" id="loginCard">
+            <h2>🛡️ Scanner Login</h2>
+            <p style="color: #94a3b8; font-size: 14px;">Access your private security terminal</p>
+            <input type="text" id="loginUser" placeholder="Username">
+            <input type="password" id="loginPass" placeholder="Password">
+            <button onclick="login()">Enter Dashboard</button>
+            <div class="toggle-link" onclick="toggleAuth()">Create an enterprise account →</div>
+        </div>
+
+        <div class="auth-card" id="registerCard" style="display: none;">
+            <h2>📝 Register Account</h2>
+            <form action="/register" method="post">
+                <input type="text" name="username" placeholder="Choose Username" required>
+                <input type="password" name="password" placeholder="Choose Password" required>
+                <button type="submit">Create Account</button>
+            </form>
+            <div class="toggle-link" onclick="toggleAuth()">← Back to login</div>
+        </div>
+
+        <div id="dashboardContainer" style="display: none; width: 900px; position: absolute; top: 40px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px;">
                 <div>
-                    <h1>🛡️ Enterprise Vulnerability Guard</h1>
-                    <p style="color: #94a3b8; margin: 5px 0 0 0;">Asynchronous Infrastructure Intelligence Platform</p>
+                    <h1 style="color: #38bdf8; margin:0;">🛡️ Enterprise Threat Console</h1>
+                    <p style="color: #94a3b8; margin: 5px 0 0 0;">Logged in as: <span id="userBadge" style="color: white; font-weight: bold;"></span></p>
                 </div>
-            </header>
+                <button onclick="logout()" style="width: auto; background: #334155; padding: 10px 20px; color: white; border: none; border-radius: 6px; cursor: pointer;">Logout</button>
+            </div>
             
-            <div class="card">
-                <div class="flex-input">
-                    <input type="text" id="targetInput" placeholder="Enter network asset domain (e.g. secure-bank.com)">
-                    <button onclick="startScan()">Analyze Risk Posture</button>
-                </div>
+            <div style="background: #111827; padding: 25px; border-radius: 12px; border: 1px solid #1e293b; margin-bottom:30px; display: flex; gap: 15px;">
+                <input type="text" id="targetInput" placeholder="Enter network asset domain (e.g. secure-bank.com)" style="flex: 1;">
+                <button onclick="startScan()" style="width: auto; padding: 0 25px; background: #0284c7; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Analyze Risk Posture</button>
             </div>
 
-            <h2>Discovered Threat Records</h2>
-            <div class="card" style="padding: 0; overflow: hidden;">
+            <div style="background: #111827; border-radius: 12px; border: 1px solid #1e293b; overflow: hidden;">
                 <table>
                     <thead>
-                        <tr><th>Target Host</th><th>Timestamp</th><th>Server Blueprint</th><th>Defense Grade</th><th>Identified Vulnerabilities</th></tr>
+                        <tr style="background: #1f2937; color: #38bdf8;"><th>Target</th><th>Timestamp</th><th>Server</th><th>Grade</th><th>Vulnerabilities</th></tr>
                     </thead>
                     <tbody id="historyTable"></tbody>
                 </table>
@@ -171,17 +180,52 @@ async def serve_dashboard():
         </div>
 
         <script>
+            let currentUser = "";
+
+            function toggleAuth() {
+                const loginCard = document.getElementById('loginCard');
+                const registerCard = document.getElementById('registerCard');
+                if(loginCard.style.display === 'none') {
+                    loginCard.style.display = 'block';
+                    registerCard.style.display = 'none';
+                } else {
+                    loginCard.style.display = 'none';
+                    registerCard.style.display = 'block';
+                }
+            }
+
+            async function login() {
+                const user = document.getElementById('loginUser').value;
+                const pass = document.getElementById('loginPass').value;
+                if(!user || !pass) return alert('Fill in all credentials!');
+                
+                currentUser = user;
+                document.getElementById('loginCard').style.display = 'none';
+                document.getElementById('dashboardContainer').style.display = 'block';
+                document.getElementById('userBadge').innerText = user;
+                
+                loadHistory();
+                setInterval(loadHistory, 5000);
+            }
+
+            function logout() {
+                window.location.reload();
+            }
+
             async function loadHistory() {
-                const res = await fetch('/history');
+                if(!currentUser) return;
+                const res = await fetch(`/history?username=${currentUser}`);
                 const data = await res.json();
                 const tbody = document.getElementById('historyTable');
                 tbody.innerHTML = '';
                 data.forEach(item => {
                     tbody.innerHTML += `
-                        <tr>
-                            <td><strong>${item.target}</strong></td>
-                            <td>${item.timestamp}</td>
-                  <td style="color: ${item.grade === 'A' ? '#10b981' : '#f43f5e'}; font-size: 14px;">${item.findings}</td>
+                        <tr style="border-bottom: 1px solid #1e293b;">
+                            <td style="padding: 16px;"><strong>${item.target}</strong></td>
+                            <td style="padding: 16px;">${item.timestamp}</td>
+                            <td style="padding: 16px;"><code>${item.server}</code></td>
+                            <td style="padding: 16px;"><span style="padding: 4px 10px; border-radius: 20px; font-weight: bold; background: ${item.grade === 'F' ? '#ef4444' : '#10b981'}">${item.grade}</span></td>
+                            <td style="padding: 16px; color: #94a3b8; font-size: 14px;">${item.findings}</td>
                         </tr>
                     `;
                 });
@@ -189,16 +233,11 @@ async def serve_dashboard():
 
             async function startScan() {
                 const target = document.getElementById('targetInput').value;
-                if(!target) return alert('Target host configuration domain missing!');
-                await fetch(`/scan?target=${target}`);
-                alert('Vulnerability scanner pipeline initialized successfully.');
+                if(!target) return alert('Target asset domain missing!');
+                await fetch(`/scan?target=${target}&username=${currentUser}`);
+                alert('Vulnerability scan initialized.');
                 setTimeout(loadHistory, 1500);
             }
-                            <td><code>${item.server}</code></td>
-                            <td><span class="grade-badge grade-${item.grade}">${item.grade}</span></td>
-          
-            loadHistory();
-            setInterval(loadHistory, 8000);
         </script>
     </body>
     </html>
