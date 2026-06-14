@@ -1,5 +1,5 @@
-from fastapi import FastAPI, BackgroundTasks
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, BackgroundTasks, Depends, HTTPException, status, Form
+from fastapi.responses import HTMLResponse, RedirectResponse
 import httpx
 import sqlite3
 from datetime import datetime
@@ -9,29 +9,23 @@ import asyncio
 app = FastAPI()
 
 # ==========================================
-# CRON AUTOMATED INTERVAL SCANNER
-# ==========================================
-scheduler = BackgroundScheduler()
-
-def auto_cron_job():
-    print("\n[CRON TIMERS] Executing recurring safety check...")
-    try:
-        asyncio.run(run_security_scan("google.com"))
-    except Exception as e:
-        print(f"[CRON ERROR] Auto scan skipped: {str(e)}")
-
-scheduler.add_job(auto_cron_job, 'interval', minutes=5) # Sweeps every 5 mins now to prevent spam
-scheduler.start()
-
-# ==========================================
-# ADVANCED DATABASE SCHEMA
+# ADVANCED DATABASE SCHEMA (WITH USERS LAYER)
 # ==========================================
 def init_db():
     conn = sqlite3.connect("scans.db")
     cursor = conn.cursor()
+    # Create Users Table
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            username TEXT PRIMARY KEY,
+            password TEXT
+        )
+    """)
+    # Create Scans Table linked to a specific user
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS scan_results (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
             target TEXT,
             timestamp TEXT,
             ssl_active INTEGER,
@@ -46,72 +40,75 @@ def init_db():
 init_db()
 
 # ==========================================
-# DEEP SECURITY SCANNING ENGINE
+# SECURITY DEEP SCANNER ENGINE
 # ==========================================
-async def run_security_scan(target_url: str):
+async def run_security_scan(target_url: str, username: str):
     try:
         async with httpx.AsyncClient() as client:
-            # Clean URL format
             clean_url = target_url.strip().replace("http://", "").replace("https://", "")
             base_url = f"https://{clean_url}"
             
-            # Start gathering security data
             response = await client.get(base_url, timeout=5.0, follow_redirects=True)
             headers = response.headers
             
             has_ssl = 1 if response.url.scheme == "https" else 0
             server_name = headers.get('Server', 'Hidden / Protected')
             
-            # Audit missing protective headers
             missing_headers = []
-            score = 100 # Perfect initial score
-            
+            score = 100
             if "X-Frame-Options" not in headers: 
-                missing_headers.append("Missing X-Frame-Options (Clickjacking Risk)")
+                missing_headers.append("Missing X-Frame-Options")
                 score -= 25
             if "Content-Security-Policy" not in headers: 
-                missing_headers.append("Missing CSP (Cross-Site Scripting Risk)")
+                missing_headers.append("Missing CSP")
                 score -= 30
-            if "Strict-Transport-Security" not in headers:
-                missing_headers.append("Missing HSTS (Man-in-the-Middle Risk)")
-                score -= 15
-            if not has_ssl:
-                score -= 30
+            if not has_ssl: score -= 30
 
-            # Calculate Security Letter Grade
             if score >= 90: grade = "A"
             elif score >= 75: grade = "B"
-            elif score >= 50: grade = "C"
             else: grade = "F"
             
-            vulns_string = " | ".join(missing_headers) if missing_headers else "None Detected (Excellent Position)"
+            vulns_string = " | ".join(missing_headers) if missing_headers else "None Detected"
 
-            # Save full security parameters to relational storage
             conn = sqlite3.connect("scans.db")
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO scan_results (target, timestamp, ssl_active, server, grade, vulnerabilities)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (clean_url, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), has_ssl, server_name, grade, vulns_string))
+                INSERT INTO scan_results (username, target, timestamp, ssl_active, server, grade, vulnerabilities)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (username, clean_url, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), has_ssl, server_name, grade, vulns_string))
             conn.commit()
             conn.close()
-            print(f"[DATABASE] Saved audit report for {clean_url} (Grade: {grade})")
     except Exception as e:
-        print(f"[SCAN FAILURE] Couldn't audit {target_url}: {str(e)}")
+        print(f"Scan failure: {str(e)}")
 
-@app.get("/scan")
-async def trigger_scan(target: str, background_tasks: BackgroundTasks):
-    background_tasks.add_task(run_security_scan, target)
-    return {"status": "Scan Queued", "target": target}
+# ==========================================
+# AUTHENTICATION & ROUTING PIPELINES
+# ==========================================
+@app.post("/register")
+async def register_user(username: str = Form(...), password: str = Form(...)):
+    try:
+        conn = sqlite3.connect("scans.db")
+        cursor = conn.cursor()
+        cursor.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, password))
+        conn.commit()
+        conn.close()
+        return HTMLResponse("<script>alert('Account created successfully! You can now log in.'); window.location.href='/';</script>")
+    except Exception as e:
+        return HTMLResponse("<script>alert('Username already exists! Please try another one.'); window.location.href='/';</script>")
 
 @app.get("/history")
-async def get_scan_history():
+async def get_scan_history(username: str):
     conn = sqlite3.connect("scans.db")
     cursor = conn.cursor()
-    cursor.execute("SELECT id, target, timestamp, ssl_active, server, grade, vulnerabilities FROM scan_results ORDER BY id DESC")
+    cursor.execute("SELECT id, target, timestamp, ssl_active, server, grade, vulnerabilities FROM scan_results WHERE username = ? ORDER BY id DESC", (username,))
     rows = cursor.fetchall()
     conn.close()
     return [{"id": r[0], "target": r[1], "timestamp": r[2], "ssl_enabled": bool(r[3]), "server": r[4], "grade": r[5], "findings": r[6]} for r in rows]
+
+@app.get("/scan")
+async def trigger_scan(target: str, username: str, background_tasks: BackgroundTasks):
+    background_tasks.add_task(run_security_scan, target, username)
+    return {"status": "Scan Queued"}
 
 # ==========================================
 # THE AUTH-BACKED FRONTEND UI GATEWAY
@@ -162,83 +159,3 @@ async def serve_portal():
                     <p style="color: #94a3b8; margin: 5px 0 0 0;">Logged in as: <span id="userBadge" style="color: white; font-weight: bold;"></span></p>
                 </div>
                 <button onclick="logout()" style="width: auto; background: #334155; padding: 10px 20px; color: white; border: none; border-radius: 6px; cursor: pointer;">Logout</button>
-            </div>
-            
-            <div style="background: #111827; padding: 25px; border-radius: 12px; border: 1px solid #1e293b; margin-bottom:30px; display: flex; gap: 15px;">
-                <input type="text" id="targetInput" placeholder="Enter network asset domain (e.g. secure-bank.com)" style="flex: 1;">
-                <button onclick="startScan()" style="width: auto; padding: 0 25px; background: #0284c7; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold;">Analyze Risk Posture</button>
-            </div>
-
-            <div style="background: #111827; border-radius: 12px; border: 1px solid #1e293b; overflow: hidden;">
-                <table>
-                    <thead>
-                        <tr style="background: #1f2937; color: #38bdf8;"><th>Target</th><th>Timestamp</th><th>Server</th><th>Grade</th><th>Vulnerabilities</th></tr>
-                    </thead>
-                    <tbody id="historyTable"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <script>
-            let currentUser = "";
-
-            function toggleAuth() {
-                const loginCard = document.getElementById('loginCard');
-                const registerCard = document.getElementById('registerCard');
-                if(loginCard.style.display === 'none') {
-                    loginCard.style.display = 'block';
-                    registerCard.style.display = 'none';
-                } else {
-                    loginCard.style.display = 'none';
-                    registerCard.style.display = 'block';
-                }
-            }
-
-            async function login() {
-                const user = document.getElementById('loginUser').value;
-                const pass = document.getElementById('loginPass').value;
-                if(!user || !pass) return alert('Fill in all credentials!');
-                
-                currentUser = user;
-                document.getElementById('loginCard').style.display = 'none';
-                document.getElementById('dashboardContainer').style.display = 'block';
-                document.getElementById('userBadge').innerText = user;
-                
-                loadHistory();
-                setInterval(loadHistory, 5000);
-            }
-
-            function logout() {
-                window.location.reload();
-            }
-
-            async function loadHistory() {
-                if(!currentUser) return;
-                const res = await fetch(`/history?username=${currentUser}`);
-                const data = await res.json();
-                const tbody = document.getElementById('historyTable');
-                tbody.innerHTML = '';
-                data.forEach(item => {
-                    tbody.innerHTML += `
-                        <tr style="border-bottom: 1px solid #1e293b;">
-                            <td style="padding: 16px;"><strong>${item.target}</strong></td>
-                            <td style="padding: 16px;">${item.timestamp}</td>
-                            <td style="padding: 16px;"><code>${item.server}</code></td>
-                            <td style="padding: 16px;"><span style="padding: 4px 10px; border-radius: 20px; font-weight: bold; background: ${item.grade === 'F' ? '#ef4444' : '#10b981'}">${item.grade}</span></td>
-                            <td style="padding: 16px; color: #94a3b8; font-size: 14px;">${item.findings}</td>
-                        </tr>
-                    `;
-                });
-            }
-
-            async function startScan() {
-                const target = document.getElementById('targetInput').value;
-                if(!target) return alert('Target asset domain missing!');
-                await fetch(`/scan?target=${target}&username=${currentUser}`);
-                alert('Vulnerability scan initialized.');
-                setTimeout(loadHistory, 1500);
-            }
-        </script>
-    </body>
-    </html>
-    """
